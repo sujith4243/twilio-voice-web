@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Twilio Voice Web Call</title>
+    <script src="https://sdk.twilio.com/js/client/v1.13/twilio.min.js"></script>
+</head>
+<body>
+    <h2>Twilio Voice Call (Web)</h2>
+
+    <label for="number">Enter phone number to call:</label>
+    <input type="text" id="number" placeholder="+61xxxxxxxxx">
+    <button onclick="makeCall()">Call</button>
+    <button onclick="hangUp()">Hang Up</button>
+
+    <p id="status">Status: Not connected</p>
+
+    <script>
+    let device;
+
+    // Fetch token from the backend
+    fetch('/token?identity=user123')
+      .then(response => response.json())
+      .then(data => {
+        device = new Twilio.Device(data.token, { debug: true });
+
+        device.on('ready', () => {
+            document.getElementById('status').innerText = "Status: Ready to make calls";
+        });
+
+        device.on('error', (error) => {
+            console.error('Twilio.Device Error:', error);
+            document.getElementById('status').innerText = "Status: Error - See console";
+        });
+
+        device.on('connect', () => {
+            document.getElementById('status').innerText = "Status: Call in progress...";
+        });
+
+        device.on('disconnect', () => {
+            document.getElementById('status').innerText = "Status: Call ended";
+        });
+      });
+
+    function makeCall() {
+        const number = document.getElementById('number').value;
+        if (!number) {
+            alert('Please enter a phone number.');
+            return;
+        }
+        device.connect({ To: number });
+    }
+
+    function hangUp() {
+        device.disconnectAll();
+    }
+    </script>
+</body>
+</html>
