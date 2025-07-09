@@ -34,10 +34,7 @@ def token():
 
 @app.route('/incoming', methods=['POST'])
 def incoming():
-<<<<<<< HEAD
     print("📞 Incoming call received")
-=======
->>>>>>> 8a32872 (Deploy working outgoing route)
     response = VoiceResponse()
     gather = Gather(num_digits=1, action=f"{public_url}/menu", method="POST")
     gather.say("Welcome to the demo. Press 1 for Sales. Press 2 for Support.")
@@ -48,10 +45,7 @@ def incoming():
 @app.route('/menu', methods=['POST'])
 def menu():
     selected_option = request.form.get('Digits')
-<<<<<<< HEAD
     print(f"📲 Menu option selected: {selected_option}")
-=======
->>>>>>> 8a32872 (Deploy working outgoing route)
     response = VoiceResponse()
 
     if selected_option == '1':
@@ -68,12 +62,7 @@ def menu():
 
     return Response(str(response), mimetype='text/xml')
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 @app.route('/outgoing', methods=['POST'])
-=======
-@app.route('/outgoing', methods=['POST'])  # <-- This is the key route
->>>>>>> 8a32872 (Deploy working outgoing route)
 def outgoing():
     number = request.form.get('To')
     response = VoiceResponse()
@@ -81,16 +70,10 @@ def outgoing():
         dial = response.dial(callerId=twilio_number)
         dial.number(number)
     else:
-<<<<<<< HEAD
         response.say("Missing 'To' number. Cannot place call.")
-=======
-        response.say("Missing 'To' number.")
->>>>>>> 8a32872 (Deploy working outgoing route)
     return Response(str(response), mimetype='text/xml')
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🟢 Flask running on 0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port)
-
->>>>>>> 8a32872 (Deploy working outgoing route)
