@@ -129,17 +129,26 @@ def set_language():
 @app.route("/validate_pin", methods=["GET", "POST"])
 def validate_pin():
     language = request.args.get("language", "en-US")
-    digits = request.form.get("Digits", "")
+    digits   = request.values.get("Digits", "")   # ← unified source
     response = VoiceResponse()
 
     if digits == PIN_CODE:
-        # 3️⃣  Present main menu
-        gather_menu = Gather(num_digits=1, action=url_for("menu", language=language, _external=True), method="POST")
-        gather_menu.say("Press 1 to talk to the AI assistant. Press 2 to leave a voicemail.", language=language)
+        # good PIN → go to menu
+        gather_menu = Gather(
+            num_digits=1,
+            action=url_for("menu", language=language, _external=True),
+            method="POST"
+        )
+        gather_menu.say(
+            "Press 1 to talk to the AI assistant. "
+            "Press 2 to leave a voicemail.",
+            language=language
+        )
         response.append(gather_menu)
         response.say("No input received. Goodbye.", language=language)
     else:
         response.say("Incorrect PIN. Goodbye.", language=language)
+
     return Response(str(response), mimetype="text/xml")
 
 # -----------------------------------------------------------------------------
