@@ -94,7 +94,7 @@ def token():
 # -----------------------------------------------------------------------------
 # ☎️ INCOMING CALL HANDLER ------------------------------------------------------
 # -----------------------------------------------------------------------------
-@app.route("/incoming", methods=["POST"])
+@app.route("/incoming", methods=["GET", "POST"])
 def incoming():
     response = VoiceResponse()
 
