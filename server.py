@@ -157,7 +157,8 @@ def validate_pin():
 @app.route("/menu", methods=["GET", "POST"])
 def menu():
     language = request.args.get("language", "en-US")
-    digit = request.form.get("Digits", "")
+    digit = request.values.get("Digits", "").strip()   
+    app.logger.info(f"Menu digit received: '{digit}'")
     response = VoiceResponse()
 
     if digit == "1":
