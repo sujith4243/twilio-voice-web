@@ -108,9 +108,9 @@ def incoming():
 # -----------------------------------------------------------------------------
 # 🌐 LANGUAGE SELECTION ---------------------------------------------------------
 # -----------------------------------------------------------------------------
-@app.route("/set_language", methods=["POST"])
+@app.route("/set_language", methods=["GET", "POST"])
 def set_language():
-    lang_digit = request.form.get("Digits", "1")
+    lang_digit = request.values.get("Digits", "1")  
     lang_map = {"1": "en-US", "2": "es-ES", "3": "hi-IN"}
     language = lang_map.get(lang_digit, "en-US")
 
@@ -126,7 +126,7 @@ def set_language():
 # -----------------------------------------------------------------------------
 # 🔒 PIN VALIDATION ------------------------------------------------------------
 # -----------------------------------------------------------------------------
-@app.route("/validate_pin", methods=["POST"])
+@app.route("/validate_pin", methods=["GET", "POST"])
 def validate_pin():
     language = request.args.get("language", "en-US")
     digits = request.form.get("Digits", "")
@@ -145,7 +145,7 @@ def validate_pin():
 # -----------------------------------------------------------------------------
 # 📜 MAIN MENU -----------------------------------------------------------------
 # -----------------------------------------------------------------------------
-@app.route("/menu", methods=["POST"])
+@app.route("/menu", methods=["GET", "POST"])
 def menu():
     language = request.args.get("language", "en-US")
     digit = request.form.get("Digits", "")
