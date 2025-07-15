@@ -182,28 +182,23 @@ def menu():
 def ai_assistant():
     language = request.args.get("language", "en-US")
     recording_url = request.values.get("RecordingUrl")
-
-    # Simple transcription using Twilio (could use Whisper)
     transcript = request.values.get("TranscriptionText", "")
 
-    # Fallback: if no transcription, fetch recording and send to Whisper (skipped for brevity)
-
+    # ---- everything inside function is indented 4 spaces ----
     prompt = f"Caller asked: {transcript}. Provide a concise helpful answer."
 
     client = openai.OpenAI()
+    chat = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are a helpful phone assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=100
+    )
+    answer_text = chat.choices[0].message.content.strip()
 
-chat = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {"role": "system", "content": "You are a helpful phone assistant."},
-        {"role": "user", "content": prompt}
-    ],
-    max_tokens=100
-)
-
-answer_text = chat.choices[0].message.content.strip()
-
-    response = VoiceResponse()
+    response = VoiceResponse()          # ← this line aligns with others inside function
     response.say(answer_text, language=language)
     response.hangup()
 
