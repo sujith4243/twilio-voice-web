@@ -1,88 +1,157 @@
-# server.py
-import os
-from flask import Flask, request, Response, jsonify, url_for
-from twilio.twiml.voice_response import VoiceResponse, Gather, Dial
+"""
+server.py – Twilio Voice demo with IVR menu + voicemail fallback
+---------------------------------------------------------------
+• Generates client tokens (/token)
+• Handles an IVR menu for incoming calls (/incoming, /menu)
+• Places outbound calls and records voicemail if the callee
+  doesn’t pick up within 20 s (/outgoing → /voicemail → /handle_recording)
+"""
+
+from flask import Flask, request, jsonify, render_template, Response
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
+from twilio.twiml.voice_response import VoiceResponse, Gather, Dial, Record, Say
 from dotenv import load_dotenv
+from datetime import datetime
+import os
 
+# --------------------------------------------------------------------
+# Environment / Flask setup
+# --------------------------------------------------------------------
 load_dotenv()
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 
-# ------------------ Config ------------------
-PIN_CODE        = "1234"                             # change if you wish
-TWILIO_NUMBER   = os.getenv("TWILIO_NUMBER")         # your Twilio phone #
-ACCOUNT_SID     = os.getenv("TWILIO_ACCOUNT_SID")
-API_KEY_SID     = os.getenv("TWILIO_API_KEY_SID")
-API_KEY_SECRET  = os.getenv("TWILIO_API_KEY_SECRET")
-TWIML_APP_SID   = os.getenv("TWIML_APP_SID")         # created in Twilio Console
+# Twilio credentials (stored in Render environment variables)
+account_sid      = os.getenv("TWILIO_ACCOUNT_SID")
+api_key_sid      = os.getenv("TWILIO_API_KEY_SID")
+api_key_secret   = os.getenv("TWILIO_API_KEY_SECRET")
+twiml_app_sid    = os.getenv("TWIML_APP_SID")
+twilio_number    = os.getenv("TWILIO_NUMBER")
 
-# ---------- Incoming: entry -----------------
+# Public URL where Render serves your app (set as env var on Render)
+public_url       = os.getenv("PUBLIC_URL", "http://localhost:5000")
+
+# --------------------------------------------------------------------
+# Front page
+# --------------------------------------------------------------------
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/favicon.ico")
+def favicon():
+    # Avoid 404 noise in the log
+    return "", 204
+
+# --------------------------------------------------------------------
+# 1️⃣ Client access token
+# --------------------------------------------------------------------
+@app.route("/token", methods=["GET"])
+def token():
+    identity = request.args.get("identity", "user123")
+    tok      = AccessToken(account_sid, api_key_sid, api_key_secret,
+                           identity=identity)
+    tok.add_grant(VoiceGrant(outgoing_application_sid=twiml_app_sid,
+                             incoming_allow=True))
+    # to_jwt() returns bytes in newer twilio-python, str in older
+    jwt_str = tok.to_jwt()
+    if hasattr(jwt_str, "decode"):
+        jwt_str = jwt_str.decode()
+    return jsonify(token=jwt_str)
+
+# --------------------------------------------------------------------
+# 2️⃣ IVR: incoming call → menu → queue
+# --------------------------------------------------------------------
 @app.route("/incoming", methods=["POST"])
 def incoming():
-    vr = VoiceResponse()
-    g  = Gather(num_digits=1, action=url_for("set_language"), method="POST")
-    g.say("For English press 1. Para español oprima dos.", language="en-US")
-    vr.append(g)
-    vr.say("No input received. Goodbye.")
-    return Response(str(vr), mimetype="text/xml")
+    print("📞 Incoming call")
+    resp   = VoiceResponse()
+    gather = Gather(num_digits=1, action=f"{public_url}/menu", method="POST")
+    gather.say("Welcome to the demo. Press 1 for Sales. Press 2 for Support.",
+               voice="alice", language="en-AU")
+    resp.append(gather)
+    resp.say("We didn't receive any input. Goodbye.")
+    return Response(str(resp), mimetype="text/xml")
 
-# ---------- Language selection --------------
-@app.route("/set_language", methods=["GET", "POST"])
-def set_language():
-    digit    = request.values.get("Digits", "")
-    language = "en-US" if digit == "1" else "es-ES" if digit == "2" else "en-US"
+@app.route("/menu", methods=["POST"])
+def menu():
+    digit   = request.form.get("Digits")
+    print(f"📲 Menu choice: {digit}")
+    resp    = VoiceResponse()
 
-    vr = VoiceResponse()
-    g  = Gather(num_digits=len(PIN_CODE),
-                action=url_for("validate_pin", language=language),
-                method="POST")
-    g.say("Please enter your four digit PIN.", language=language)
-    vr.append(g)
-    vr.say("No input received. Goodbye.", language=language)
-    return Response(str(vr), mimetype="text/xml")
-
-# ---------- PIN validation ------------------
-@app.route("/validate_pin", methods=["GET", "POST"])
-def validate_pin():
-    language = request.args.get("language", "en-US")
-    digits   = request.values.get("Digits", "")
-    vr       = VoiceResponse()
-
-    if digits == PIN_CODE:
-        vr.say("Access granted. Thank you.", language=language)
+    if digit == "1":
+        resp.say("Transferring to Sales.", voice="alice")
+        dial = resp.dial(record="record-from-answer")
+        dial.queue("sales-support",
+                   url="http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3")
+    elif digit == "2":
+        resp.say("Transferring to Support.", voice="alice")
+        dial = resp.dial(record="record-from-answer")
+        dial.queue("sales-support",
+                   url="http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3")
     else:
-        vr.say("Invalid PIN. Goodbye.", language=language)
-    vr.hangup()
-    return Response(str(vr), mimetype="text/xml")
+        resp.say("Invalid option.", voice="alice")
+        resp.redirect("/incoming")
+    return Response(str(resp), mimetype="text/xml")
 
-# ---------- Outgoing call -------------------
+# --------------------------------------------------------------------
+# 3️⃣ Outgoing call → voicemail fallback
+# --------------------------------------------------------------------
 @app.route("/outgoing", methods=["POST"])
 def outgoing():
-    """
-    POST form-data: To=+61475859143
-    Twilio will request this route when you start an outbound call from the JS Client or curl.
-    """
-    to_number = request.form.get("To")
-    vr        = VoiceResponse()
-    if to_number:
-        dial = Dial(callerId=TWILIO_NUMBER)
-        dial.number(to_number)
-        vr.append(dial)
+    number = request.form.get("To")
+    resp   = VoiceResponse()
+
+    if number:
+        # Dial for 20 s. If unanswered/busy, Twilio POSTs to /voicemail
+        dial = resp.dial(callerId=twilio_number,
+                         timeout=20,
+                         action=f"{public_url}/voicemail",
+                         method="POST")
+        dial.number(number)
     else:
-        vr.say("Missing 'To' number.")
-    return Response(str(vr), mimetype="text/xml")
+        resp.say("Missing 'To' number. Cannot place call.", voice="alice")
+    return Response(str(resp), mimetype="text/xml")
 
-# ---------- (Optional) token for JS client ---
-@app.route("/token")
-def token():
-    identity = request.args.get("identity", "webUser")
-    tok      = AccessToken(ACCOUNT_SID, API_KEY_SID, API_KEY_SECRET, identity=identity)
-    tok.add_grant(VoiceGrant(outgoing_application_sid=TWIML_APP_SID, incoming_allow=True))
-    jwt = tok.to_jwt()
-    return jsonify(token=jwt.decode() if hasattr(jwt, "decode") else jwt)
+# 3a  Voicemail prompt
+@app.route("/voicemail", methods=["POST"])
+def voicemail():
+    resp = VoiceResponse()
+    resp.say("Sorry, no one could take your call. "
+             "Please leave a message after the beep. "
+             "Press the pound key when you're finished.",
+             voice="alice", language="en-AU")
+    resp.record(max_length=120,
+                play_beep=True,
+                finish_on_key="#",
+                action=f"{public_url}/handle_recording",
+                method="POST")
+    resp.say("We didn't get your message. Goodbye.", voice="alice")
+    resp.hangup()
+    return Response(str(resp), mimetype="text/xml")
 
-# ---------- Run locally ----------------------
+# 3b  Handle saved recording
+@app.route("/handle_recording", methods=["POST"])
+def handle_recording():
+    recording_url = request.form.get("RecordingUrl")
+    caller        = request.form.get("From")
+    timestamp     = datetime.now().isoformat(timespec="seconds")
+
+    # Log or notify
+    print(f"[Voicemail] {caller} at {timestamp} -> {recording_url}")
+
+    # TODO: Send email/SMS or store in DB here
+
+    resp = VoiceResponse()
+    resp.say("Thanks, your message has been recorded. Goodbye.",
+             voice="alice", language="en-AU")
+    resp.hangup()
+    return Response(str(resp), mimetype="text/xml")
+
+# --------------------------------------------------------------------
+# Gunicorn entry point
+# --------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    print(f"🟢 Flask dev server on http://0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port, debug=True)
