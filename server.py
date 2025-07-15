@@ -190,13 +190,18 @@ def ai_assistant():
 
     prompt = f"Caller asked: {transcript}. Provide a concise helpful answer."
 
-    ai_response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "system", "content": "You are a helpful phone assistant."},
-                  {"role": "user", "content": prompt}],
-        max_tokens=100
-    )
-    answer_text = ai_response.choices[0].message["content"].strip()
+    client = openai.OpenAI()
+
+chat = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[
+        {"role": "system", "content": "You are a helpful phone assistant."},
+        {"role": "user", "content": prompt}
+    ],
+    max_tokens=100
+)
+
+answer_text = chat.choices[0].message.content.strip()
 
     response = VoiceResponse()
     response.say(answer_text, language=language)
