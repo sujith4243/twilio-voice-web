@@ -178,13 +178,13 @@ def menu():
 # -----------------------------------------------------------------------------
 # 🤖 AI ASSISTANT --------------------------------------------------------------
 # -----------------------------------------------------------------------------
-@app.route("/ai_assistant", methods=["POST"])
+@app.route("/ai_assistant", methods=["GET", "POST"])
 def ai_assistant():
     language = request.args.get("language", "en-US")
-    recording_url = request.form.get("RecordingUrl")
+    recording_url = request.values.get("RecordingUrl")
 
     # Simple transcription using Twilio (could use Whisper)
-    transcript = request.form.get("TranscriptionText", "")
+    transcript = request.values.get("TranscriptionText", "")
 
     # Fallback: if no transcription, fetch recording and send to Whisper (skipped for brevity)
 
