@@ -1,105 +1,81 @@
-from flask import Flask, request, render_template, Response, url_for
-from twilio.twiml.voice_response import VoiceResponse, Gather, Dial
-from dotenv import load_dotenv
+from flask import Flask, request
+from twilio.twiml.voice_response import VoiceResponse, Gather
 import os
-import sqlite3
-from datetime import datetime
+from dotenv import load_dotenv
 
-app = Flask(__name__)
 load_dotenv()
+app = Flask(__name__)
 
-# ----------------- Simple SQLite for voicemail logs -----------------
-DB = "voicemails.db"
+@app.route("/")
+def index():
+    return "Voice app is running"
 
-def log_voicemail(from_num, recording_url, transcription=""):
-    conn = sqlite3.connect(DB)
-    conn.execute("CREATE TABLE IF NOT EXISTS voicemails (id INTEGER PRIMARY KEY AUTOINCREMENT, from_num TEXT, recording_url TEXT, transcription TEXT, ts TEXT)")
-    conn.execute("INSERT INTO voicemails (from_num, recording_url, transcription, ts) VALUES (?,?,?,?)", (from_num, recording_url, transcription, datetime.utcnow().isoformat()))
-    conn.commit()
-    conn.close()
+@app.route("/incoming", methods=["POST"])
+def incoming():
+    response = VoiceResponse()
+    gather = Gather(num_digits=1, action="/set_language", method="GET")
+    gather.say("For English, press 1. Para español, oprima 2.", language="en-US")
+    response.append(gather)
+    return str(response)
 
-# ----------------- Incoming call -----------------
-@app.route("/incoming", methods=["GET", "POST"])
-def incoming_call():
-    vr = VoiceResponse()
-    gather = Gather(num_digits=1, action=url_for("set_language"), method="POST")
-    gather.say("For English press 1. Para español marque dos.")
-    vr.append(gather)
-    vr.say("We did not receive input. Goodbye.")
-    return Response(str(vr), mimetype="text/xml")
-
-# ----------------- Language selection -----------------
-@app.route("/set_language", methods=["GET", "POST"])
+@app.route("/set_language", methods=["GET"])
 def set_language():
-    digit = request.values.get("Digits", "1")
-    language = "en-US" if digit == "1" else "es-ES" if digit == "2" else "en-US"
+    digit = request.args.get("Digits", "")
+    response = VoiceResponse()
+    if digit == "1":
+        language = "en-US"
+    elif digit == "2":
+        language = "es-ES"
+    else:
+        response.say("Invalid selection. Please try again.")
+        response.redirect("/incoming")
+        return str(response)
 
-    vr = VoiceResponse()
-    gather = Gather(num_digits=4, action=url_for("validate_pin", language=language), method="POST")
-    gather.say("Please enter your four digit PIN.", language=language)
-    vr.append(gather)
-    vr.say("No input received. Goodbye.", language=language)
-    return Response(str(vr), mimetype="text/xml")
+    gather = Gather(num_digits=4, action=f"/validate_pin?language={language}", method="GET")
+    gather.say("Please enter your 4 digit PIN.", language=language)
+    response.append(gather)
+    return str(response)
 
-# ----------------- PIN validation -----------------
-PIN_CODE = "1234"
-
-@app.route("/validate_pin", methods=["GET", "POST"])
+@app.route("/validate_pin", methods=["GET"])
 def validate_pin():
     language = request.args.get("language", "en-US")
-    pin      = request.values.get("Digits", "")
-    vr       = VoiceResponse()
+    digit = request.args.get("Digits", "")
+    response = VoiceResponse()
 
-    if pin == PIN_CODE:
-        gather = Gather(num_digits=1, action=url_for("menu", language=language), method="POST")
+    if digit == "1234":
+        gather = Gather(num_digits=1, action=f"/menu?language={language}", method="GET")
         gather.say("Press 1 to leave a voicemail.", language=language)
-        vr.append(gather)
-        vr.say("No input received. Goodbye.", language=language)
+        response.append(gather)
     else:
-        vr.say("Invalid PIN. Goodbye.", language=language)
-    return Response(str(vr), mimetype="text/xml")
+        response.say("Invalid PIN. Try again.", language=language)
+        response.redirect("/incoming")
+    return str(response)
 
-# ----------------- Menu (voicemail only) -----------------
-@app.route("/menu", methods=["GET", "POST"])
+@app.route("/menu", methods=["GET"])
 def menu():
+    digit = request.args.get("Digits", "")
     language = request.args.get("language", "en-US")
-    digit    = request.values.get("Digits", "")
-    vr       = VoiceResponse()
+    response = VoiceResponse()
 
     if digit == "1":
-        vr.say("Please leave your message after the beep.", language=language)
-        vr.record(max_length=120,
-                  play_beep=True,
-                  action=url_for("handle_voicemail", language=language),
-                  transcribe=True,
-                  transcribe_callback=url_for("save_transcription"))
+        response.say("Please leave your message after the beep. Press the pound key when done.", language=language)
+        response.record(maxLength=120, action="/voicemail", method="POST", transcribe=True)
     else:
-        vr.say("Invalid option. Goodbye.", language=language)
-    return Response(str(vr), mimetype="text/xml")
+        response.say("Invalid option. Returning to main menu.", language=language)
+        response.redirect("/incoming")
 
-# ----------------- Handle voicemail -----------------
-@app.route("/handle_voicemail", methods=["POST"])
-def handle_voicemail():
-    language      = request.args.get("language", "en-US")
-    recording_url = request.values.get("RecordingUrl")
-    from_num      = request.values.get("From")
+    return str(response)
 
-    log_voicemail(from_num, recording_url)
+@app.route("/voicemail", methods=["POST"])
+def voicemail():
+    recording_url = request.form.get("RecordingUrl")
+    transcription = request.form.get("TranscriptionText", "[No transcription]")
+    print(f"[Voicemail] Recording: {recording_url}")
+    print(f"[Transcription] {transcription}")
 
-    vr = VoiceResponse()
-    vr.say("Thank you. Your message has been recorded. Goodbye.", language=language)
-    vr.hangup()
-    return Response(str(vr), mimetype="text/xml")
+    response = VoiceResponse()
+    response.say("Thank you. Your voicemail has been recorded.", language="en-US")
+    return str(response)
 
-# ----------------- Save transcription -----------------
-@app.route("/save_transcription", methods=["POST"])
-def save_transcription():
-    recording_sid = request.values.get("RecordingSid")
-    transcription = request.values.get("TranscriptionText", "")
-    recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{os.getenv('TWILIO_ACCOUNT_SID')}/Recordings/{recording_sid}"
-    log_voicemail(request.values.get("From"), recording_url, transcription)
-    return "", 204
-
-# ----------------- Run -----------------
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
