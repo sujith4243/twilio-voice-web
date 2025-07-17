@@ -1,16 +1,18 @@
 """
-server.py – Twilio Voice demo with IVR menu + voicemail fallback
----------------------------------------------------------------
+server.py – Twilio Voice demo with IVR menu + voicemail SMS notification
+-------------------------------------------------------------------------
 • Generates client tokens (/token)
 • Handles an IVR menu for incoming calls (/incoming, /menu)
 • Places outbound calls and records voicemail if the callee
   doesn’t pick up within 20 s (/outgoing → /voicemail → /handle_recording)
+• Sends SMS when voicemail is received
 """
 
 from flask import Flask, request, jsonify, render_template, Response
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 from twilio.twiml.voice_response import VoiceResponse, Gather, Dial, Record, Say
+from twilio.rest import Client
 from dotenv import load_dotenv
 from datetime import datetime
 import os
@@ -21,15 +23,19 @@ import os
 load_dotenv()
 app = Flask(__name__, template_folder="templates")
 
-# Twilio credentials (stored in Render environment variables)
-account_sid      = os.getenv("TWILIO_ACCOUNT_SID")
-api_key_sid      = os.getenv("TWILIO_API_KEY_SID")
-api_key_secret   = os.getenv("TWILIO_API_KEY_SECRET")
-twiml_app_sid    = os.getenv("TWIML_APP_SID")
-twilio_number    = os.getenv("TWILIO_NUMBER")
+# Twilio credentials (stored in .env or Render environment variables)
+account_sid        = os.getenv("TWILIO_ACCOUNT_SID")
+api_key_sid        = os.getenv("TWILIO_API_KEY_SID")
+api_key_secret     = os.getenv("TWILIO_API_KEY_SECRET")
+twiml_app_sid      = os.getenv("TWIML_APP_SID")
+twilio_number      = os.getenv("TWILIO_NUMBER")
+twilio_auth_token  = os.getenv("TWILIO_AUTH_TOKEN")  # REQUIRED for SMS
 
-# Public URL where Render serves your app (set as env var on Render)
-public_url       = os.getenv("PUBLIC_URL", "http://localhost:5000")
+# Public URL for webhook responses
+public_url         = os.getenv("PUBLIC_URL", "http://localhost:5000")
+
+# Twilio REST client (for sending SMS notifications)
+twilio_client = Client(account_sid, twilio_auth_token)
 
 # --------------------------------------------------------------------
 # Front page
@@ -40,7 +46,6 @@ def index():
 
 @app.route("/favicon.ico")
 def favicon():
-    # Avoid 404 noise in the log
     return "", 204
 
 # --------------------------------------------------------------------
@@ -49,11 +54,8 @@ def favicon():
 @app.route("/token", methods=["GET"])
 def token():
     identity = request.args.get("identity", "user123")
-    tok      = AccessToken(account_sid, api_key_sid, api_key_secret,
-                           identity=identity)
-    tok.add_grant(VoiceGrant(outgoing_application_sid=twiml_app_sid,
-                             incoming_allow=True))
-    # to_jwt() returns bytes in newer twilio-python, str in older
+    tok      = AccessToken(account_sid, api_key_sid, api_key_secret, identity=identity)
+    tok.add_grant(VoiceGrant(outgoing_application_sid=twiml_app_sid, incoming_allow=True))
     jwt_str = tok.to_jwt()
     if hasattr(jwt_str, "decode"):
         jwt_str = jwt_str.decode()
@@ -75,9 +77,9 @@ def incoming():
 
 @app.route("/menu", methods=["POST"])
 def menu():
-    digit   = request.form.get("Digits")
+    digit = request.form.get("Digits")
     print(f"📲 Menu choice: {digit}")
-    resp    = VoiceResponse()
+    resp = VoiceResponse()
 
     if digit == "1":
         resp.say("Transferring to Sales.", voice="alice")
@@ -103,7 +105,6 @@ def outgoing():
     resp   = VoiceResponse()
 
     if number:
-        # Dial for 20 s. If unanswered/busy, Twilio POSTs to /voicemail
         dial = resp.dial(callerId=twilio_number,
                          timeout=20,
                          action=f"{public_url}/voicemail",
@@ -113,7 +114,6 @@ def outgoing():
         resp.say("Missing 'To' number. Cannot place call.", voice="alice")
     return Response(str(resp), mimetype="text/xml")
 
-# 3a  Voicemail prompt
 @app.route("/voicemail", methods=["POST"])
 def voicemail():
     resp = VoiceResponse()
@@ -130,17 +130,24 @@ def voicemail():
     resp.hangup()
     return Response(str(resp), mimetype="text/xml")
 
-# 3b  Handle saved recording
 @app.route("/handle_recording", methods=["POST"])
 def handle_recording():
     recording_url = request.form.get("RecordingUrl")
     caller        = request.form.get("From")
     timestamp     = datetime.now().isoformat(timespec="seconds")
 
-    # Log or notify
     print(f"[Voicemail] {caller} at {timestamp} -> {recording_url}")
 
-    # TODO: Send email/SMS or store in DB here
+    # 🔔 Send SMS Notification
+    try:
+        twilio_client.messages.create(
+            body=f"📨 New voicemail from {caller} at {timestamp}:\n{recording_url}",
+            from_=twilio_number,
+            to="+61XXXXXXXXX"  # 🔁 Replace with your personal mobile number
+        )
+        print("✅ SMS notification sent.")
+    except Exception as e:
+        print(f"❌ Error sending SMS: {e}")
 
     resp = VoiceResponse()
     resp.say("Thanks, your message has been recorded. Goodbye.",
