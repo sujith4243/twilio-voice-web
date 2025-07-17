@@ -102,6 +102,8 @@ def menu():
 @app.route("/outgoing", methods=["POST"])
 def outgoing():
     number = request.form.get("To")
+    print(f"🚀 /outgoing triggered. Dialing: {number}")
+
     resp   = VoiceResponse()
 
     if number:
@@ -132,7 +134,9 @@ def voicemail():
 
 @app.route("/handle_recording", methods=["POST"])
 def handle_recording():
+    print("💾 Voicemail recording received")
     recording_url = request.form.get("RecordingUrl")
+   
     caller        = request.form.get("From")
     timestamp     = datetime.now().isoformat(timespec="seconds")
 
