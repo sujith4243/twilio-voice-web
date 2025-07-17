@@ -1,38 +1,36 @@
 """
-server.py – Twilio Voice demo with IVR menu + voicemail SMS notification
--------------------------------------------------------------------------
-• Generates client tokens (/token)
-• Handles an IVR menu for incoming calls (/incoming, /menu)
-• Places outbound calls and records voicemail if the callee
-  doesn’t pick up within 20 s (/outgoing → /voicemail → /handle_recording)
-• Sends SMS when voicemail is received
+server.py – Twilio Voice app with IVR + Voicemail + SMS Notification
 """
 
 from flask import Flask, request, jsonify, render_template, Response
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
-from twilio.twiml.voice_response import VoiceResponse, Gather, Dial, Record, Say
+from twilio.twiml.voice_response import VoiceResponse, Gather, Dial
 from twilio.rest import Client
 from dotenv import load_dotenv
 from datetime import datetime
 import os
 
 # --------------------------------------------------------------------
-# Environment / Flask setup
+# Load environment variables
 # --------------------------------------------------------------------
 load_dotenv()
 app = Flask(__name__, template_folder="templates")
 
-# Twilio credentials
+# Twilio credentials from environment
 account_sid        = os.getenv("TWILIO_ACCOUNT_SID")
 api_key_sid        = os.getenv("TWILIO_API_KEY_SID")
 api_key_secret     = os.getenv("TWILIO_API_KEY_SECRET")
 twiml_app_sid      = os.getenv("TWIML_APP_SID")
 twilio_number      = os.getenv("TWILIO_NUMBER")
-twilio_auth_token  = os.getenv("TWILIO_AUTH_TOKEN")  # For sending SMS
-public_url         = os.getenv("PUBLIC_URL", "http://localhost:5000")
+twilio_auth_token  = os.getenv("TWILIO_AUTH_TOKEN")
+public_url         = os.getenv("PUBLIC_URL")
 
-# Twilio REST client (for SMS)
+# Validate critical variables
+if not all([account_sid, api_key_sid, api_key_secret, twiml_app_sid, twilio_number, twilio_auth_token, public_url]):
+    raise EnvironmentError("Missing one or more required environment variables.")
+
+# Create Twilio REST client
 twilio_client = Client(account_sid, twilio_auth_token)
 
 # --------------------------------------------------------------------
@@ -47,88 +45,83 @@ def favicon():
     return "", 204
 
 # --------------------------------------------------------------------
-# 1️⃣ Generate access token for Twilio client
+# 1️⃣ Generate token for client
 # --------------------------------------------------------------------
 @app.route("/token", methods=["GET"])
 def token():
     identity = request.args.get("identity", "user123")
-    tok = AccessToken(account_sid, api_key_sid, api_key_secret, identity=identity)
-    tok.add_grant(VoiceGrant(outgoing_application_sid=twiml_app_sid, incoming_allow=True))
-    jwt_str = tok.to_jwt()
-    if hasattr(jwt_str, "decode"):
-        jwt_str = jwt_str.decode()
-    return jsonify(token=jwt_str)
+    access_token = AccessToken(account_sid, api_key_sid, api_key_secret, identity=identity)
+    access_token.add_grant(VoiceGrant(outgoing_application_sid=twiml_app_sid, incoming_allow=True))
+    jwt_token = access_token.to_jwt()
+    return jsonify(token=jwt_token.decode() if hasattr(jwt_token, "decode") else jwt_token)
 
 # --------------------------------------------------------------------
-# 2️⃣ IVR Menu Handling
+# 2️⃣ Handle incoming call with IVR menu
 # --------------------------------------------------------------------
 @app.route("/incoming", methods=["POST"])
 def incoming():
     print("📞 Incoming call")
-    resp = VoiceResponse()
+    response = VoiceResponse()
     gather = Gather(num_digits=1, action=f"{public_url}/menu", method="POST")
-    gather.say("Welcome to the demo. Press 1 for Sales. Press 2 for Support.",
-               voice="alice", language="en-AU")
-    resp.append(gather)
-    resp.say("We didn't receive any input. Goodbye.")
-    return Response(str(resp), mimetype="text/xml")
+    gather.say("Welcome to the demo. Press 1 for Sales. Press 2 for Support.", voice="alice", language="en-AU")
+    response.append(gather)
+    response.say("No input received. Goodbye.", voice="alice")
+    return Response(str(response), mimetype="text/xml")
 
 @app.route("/menu", methods=["POST"])
 def menu():
     digit = request.form.get("Digits")
-    print(f"📲 Menu choice: {digit}")
-    resp = VoiceResponse()
+    print(f"📲 IVR choice: {digit}")
+    response = VoiceResponse()
 
-    if digit == "1":
-        resp.say("Transferring to Sales.", voice="alice")
-        dial = resp.dial(record="record-from-answer")
-        dial.queue("sales-support",
-                   url="http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3")
-    elif digit == "2":
-        resp.say("Transferring to Support.", voice="alice")
-        dial = resp.dial(record="record-from-answer")
-        dial.queue("sales-support",
-                   url="http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3")
+    if digit in ["1", "2"]:
+        response.say("Transferring your call.", voice="alice")
+        dial = response.dial(record="record-from-answer")
+        dial.queue("sales-support", url="http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3")
     else:
-        resp.say("Invalid option.", voice="alice")
-        resp.redirect("/incoming")
-    return Response(str(resp), mimetype="text/xml")
+        response.say("Invalid selection.", voice="alice")
+        response.redirect("/incoming")
+
+    return Response(str(response), mimetype="text/xml")
 
 # --------------------------------------------------------------------
-# 3️⃣ Outgoing Call → Voicemail Fallback
+# 3️⃣ Handle outgoing calls with voicemail fallback
 # --------------------------------------------------------------------
 @app.route("/outgoing", methods=["POST"])
 def outgoing():
     number = request.form.get("To")
-    print(f"🚀 /outgoing triggered. Dialing: {number}")
-    resp = VoiceResponse()
+    print(f"🚀 Outgoing call to: {number}")
+    response = VoiceResponse()
 
     if number:
-        dial = resp.dial(callerId=twilio_number,
-                         timeout=20,
-                         action=f"{public_url}/voicemail",
-                         method="POST")
+        dial = response.dial(
+            callerId=twilio_number,
+            timeout=20,
+            action=f"{public_url}/voicemail",
+            method="POST"
+        )
         dial.number(number)
     else:
-        resp.say("Missing 'To' number. Cannot place call.", voice="alice")
-    return Response(str(resp), mimetype="text/xml")
+        response.say("Missing phone number.", voice="alice")
+
+    return Response(str(response), mimetype="text/xml")
 
 @app.route("/voicemail", methods=["POST"])
 def voicemail():
-    print("📩 Voicemail route hit")
-    resp = VoiceResponse()
-    resp.say("Sorry, no one could take your call. "
-             "Please leave a message after the beep. "
-             "Press the pound key when you're finished.",
-             voice="alice", language="en-AU")
-    resp.record(max_length=120,
-                play_beep=True,
-                finish_on_key="#",
-                action=f"{public_url}/handle_recording",
-                method="POST")
-    resp.say("We didn't get your message. Goodbye.", voice="alice")
-    resp.hangup()
-    return Response(str(resp), mimetype="text/xml")
+    print("📩 Voicemail triggered")
+    response = VoiceResponse()
+    response.say("Sorry, no one could take your call. Please leave a message after the beep. Press the pound key when done.",
+                 voice="alice", language="en-AU")
+    response.record(
+        max_length=120,
+        play_beep=True,
+        finish_on_key="#",
+        action=f"{public_url}/handle_recording",
+        method="POST"
+    )
+    response.say("We didn't receive your message. Goodbye.", voice="alice")
+    response.hangup()
+    return Response(str(response), mimetype="text/xml")
 
 @app.route("/handle_recording", methods=["POST"])
 def handle_recording():
@@ -139,33 +132,31 @@ def handle_recording():
     timestamp = datetime.now().isoformat(timespec="seconds")
 
     if not recording_url:
-        print("❗ Missing recording URL from Twilio webhook.")
-        return Response("Missing data", status=400)
+        print("❗ Missing recording URL")
+        return Response("Missing recording URL", status=400)
 
     print(f"[Voicemail] {caller} at {timestamp} -> {recording_url}")
 
-    # 🔔 Send SMS Notification
     try:
-        print("📤 Sending SMS to +61475859143")
+        print("📤 Sending SMS alert")
         twilio_client.messages.create(
             body=f"📨 New voicemail from {caller} at {timestamp}:\n{recording_url}",
             from_=twilio_number,
-            to="+61475859143"  # <-- Replace with your own verified mobile number
+            to="+61475859143"  # <-- Replace with your phone
         )
         print("✅ SMS notification sent.")
     except Exception as e:
         print(f"❌ Error sending SMS: {e}")
 
-    resp = VoiceResponse()
-    resp.say("Thanks, your message has been recorded. Goodbye.",
-             voice="alice", language="en-AU")
-    resp.hangup()
-    return Response(str(resp), mimetype="text/xml")
+    response = VoiceResponse()
+    response.say("Thanks, your message has been recorded. Goodbye.", voice="alice", language="en-AU")
+    response.hangup()
+    return Response(str(response), mimetype="text/xml")
 
 # --------------------------------------------------------------------
-# 4️⃣ Run Flask (dev mode) or via Gunicorn in production
+# Run server locally (Render uses gunicorn)
 # --------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🟢 Flask dev server running on http://0.0.0.0:{port}")
+    print(f"🟢 Flask server running on http://0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port, debug=True)
