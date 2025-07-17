@@ -143,7 +143,7 @@ def handle_recording():
         twilio_client.messages.create(
             body=f"📨 New voicemail from {caller} at {timestamp}:\n{recording_url}",
             from_=twilio_number,
-            to="+61XXXXXXXXX"  # 🔁 Replace with your personal mobile number
+            to="+61475859143"  # 🔁 Replace with your personal mobile number
         )
         print("✅ SMS notification sent.")
     except Exception as e:
