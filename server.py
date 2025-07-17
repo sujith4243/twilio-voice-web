@@ -23,18 +23,16 @@ import os
 load_dotenv()
 app = Flask(__name__, template_folder="templates")
 
-# Twilio credentials (stored in .env or Render environment variables)
+# Twilio credentials
 account_sid        = os.getenv("TWILIO_ACCOUNT_SID")
 api_key_sid        = os.getenv("TWILIO_API_KEY_SID")
 api_key_secret     = os.getenv("TWILIO_API_KEY_SECRET")
 twiml_app_sid      = os.getenv("TWIML_APP_SID")
 twilio_number      = os.getenv("TWILIO_NUMBER")
-twilio_auth_token  = os.getenv("TWILIO_AUTH_TOKEN")  # REQUIRED for SMS
-
-# Public URL for webhook responses
+twilio_auth_token  = os.getenv("TWILIO_AUTH_TOKEN")  # For sending SMS
 public_url         = os.getenv("PUBLIC_URL", "http://localhost:5000")
 
-# Twilio REST client (for sending SMS notifications)
+# Twilio REST client (for SMS)
 twilio_client = Client(account_sid, twilio_auth_token)
 
 # --------------------------------------------------------------------
@@ -49,12 +47,12 @@ def favicon():
     return "", 204
 
 # --------------------------------------------------------------------
-# 1️⃣ Client access token
+# 1️⃣ Generate access token for Twilio client
 # --------------------------------------------------------------------
 @app.route("/token", methods=["GET"])
 def token():
     identity = request.args.get("identity", "user123")
-    tok      = AccessToken(account_sid, api_key_sid, api_key_secret, identity=identity)
+    tok = AccessToken(account_sid, api_key_sid, api_key_secret, identity=identity)
     tok.add_grant(VoiceGrant(outgoing_application_sid=twiml_app_sid, incoming_allow=True))
     jwt_str = tok.to_jwt()
     if hasattr(jwt_str, "decode"):
@@ -62,12 +60,12 @@ def token():
     return jsonify(token=jwt_str)
 
 # --------------------------------------------------------------------
-# 2️⃣ IVR: incoming call → menu → queue
+# 2️⃣ IVR Menu Handling
 # --------------------------------------------------------------------
 @app.route("/incoming", methods=["POST"])
 def incoming():
     print("📞 Incoming call")
-    resp   = VoiceResponse()
+    resp = VoiceResponse()
     gather = Gather(num_digits=1, action=f"{public_url}/menu", method="POST")
     gather.say("Welcome to the demo. Press 1 for Sales. Press 2 for Support.",
                voice="alice", language="en-AU")
@@ -97,14 +95,13 @@ def menu():
     return Response(str(resp), mimetype="text/xml")
 
 # --------------------------------------------------------------------
-# 3️⃣ Outgoing call → voicemail fallback
+# 3️⃣ Outgoing Call → Voicemail Fallback
 # --------------------------------------------------------------------
 @app.route("/outgoing", methods=["POST"])
 def outgoing():
     number = request.form.get("To")
     print(f"🚀 /outgoing triggered. Dialing: {number}")
-
-    resp   = VoiceResponse()
+    resp = VoiceResponse()
 
     if number:
         dial = resp.dial(callerId=twilio_number,
@@ -118,6 +115,7 @@ def outgoing():
 
 @app.route("/voicemail", methods=["POST"])
 def voicemail():
+    print("📩 Voicemail route hit")
     resp = VoiceResponse()
     resp.say("Sorry, no one could take your call. "
              "Please leave a message after the beep. "
@@ -135,19 +133,24 @@ def voicemail():
 @app.route("/handle_recording", methods=["POST"])
 def handle_recording():
     print("💾 Voicemail recording received")
+
     recording_url = request.form.get("RecordingUrl")
-   
-    caller        = request.form.get("From")
-    timestamp     = datetime.now().isoformat(timespec="seconds")
+    caller = request.form.get("From")
+    timestamp = datetime.now().isoformat(timespec="seconds")
+
+    if not recording_url:
+        print("❗ Missing recording URL from Twilio webhook.")
+        return Response("Missing data", status=400)
 
     print(f"[Voicemail] {caller} at {timestamp} -> {recording_url}")
 
     # 🔔 Send SMS Notification
     try:
+        print("📤 Sending SMS to +61475859143")
         twilio_client.messages.create(
             body=f"📨 New voicemail from {caller} at {timestamp}:\n{recording_url}",
             from_=twilio_number,
-            to="+61475859143"  # 🔁 Replace with your personal mobile number
+            to="+61475859143"  # <-- Replace with your own verified mobile number
         )
         print("✅ SMS notification sent.")
     except Exception as e:
@@ -160,9 +163,9 @@ def handle_recording():
     return Response(str(resp), mimetype="text/xml")
 
 # --------------------------------------------------------------------
-# Gunicorn entry point
+# 4️⃣ Run Flask (dev mode) or via Gunicorn in production
 # --------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🟢 Flask dev server on http://0.0.0.0:{port}")
+    print(f"🟢 Flask dev server running on http://0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port, debug=True)
